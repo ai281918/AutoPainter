@@ -12,18 +12,20 @@ import matplotlib.pyplot as plt
 ###################### Window ######################
 # variable
 USE_MODEL = False
+RGB = False
 PADDINGS = [2, 4, 8, 16, 32]
 DRAWING_AREA = (512, 512, 3)
 SHOW_AREA = (128, 128, 3)
 TOOLBOX_AREA = (924, 32)
 WINDOW_AREA = (TOOLBOX_AREA[0], TOOLBOX_AREA[1]+DRAWING_AREA[1]+PADDINGS[2]*2)
+save_dir = 'save/'
 
 if USE_MODEL:
-    import model_2 as model
+    import VAEGAN_head_128_RGB as model
 
 # main window
 root = Tk()
-root.title('Hi')
+root.title('Sketching Master')
 root.geometry(str(WINDOW_AREA[0])+'x'+str(WINDOW_AREA[1]))
 root.resizable(width=False, height=False)
 root.columnconfigure(1, weight=1)
@@ -54,15 +56,13 @@ def highlight_button(id):
     stencil_buttons[id].configure(background='gray')
 
 def pen_button_cllick():
-    global stencil_color, stencil_id
+    global stencil_id
     stencil_id = stencils['pen']
-    stencil_color = (0, 0, 0)
     highlight_button(stencils['pen'])
 
 def eraser_button_click():
-    global stencil_color, stencil_id
+    global stencil_id
     stencil_id = stencils['eraser']
-    stencil_color = (255, 255, 255)
     highlight_button(stencils['eraser'])
 
 pen_image = PhotoImage(file='resource/pen.png')
@@ -83,17 +83,106 @@ palette_square_image = np.zeros((128, 128, 3))
 palette_weighting_1 = np.zeros((128, 128, 3))
 palette_weighting_2 = np.zeros((128, 128, 3))
 palette_H = np.array([255, 0, 0])
-stencil_color = (0, 0, 0)
 stencil_size = np.ones(len(stencils), np.int) * 5
 stencil_id = 0
 mouse_x = mouse_y = pre_x = pre_y = 0
-palette_circle_x, palette_circle_y, palette_square_x, palette_square_y = 195, 33, 127, 0
+palette_circle_x, palette_circle_y, palette_square_x, palette_square_y = 195, 33, 0, 127
 palette_pressing = False
-def reImage(img, size=(128,128), gray=False):
-    if gray:
+redo_queue = []
+
+def insert_queue(img):
+    redo_queue.insert(0,np.copy(img))
+    if(len(redo_queue) > 10):
+        redo_queue.pop()
+
+def redo():
+    global img
+    if(len(redo_queue)>0):
+        print("Redo")
+        img = np.copy(redo_queue[0])
+        redo_queue.pop(0)
+    else:
+        print("Can't Redo")
+
+def reImage(img, size=(128,128)):
+    if not RGB:
         return np.array(Image.fromarray(img).resize(size, Image.ANTIALIAS))[:,:,0] / 255.
     return np.array(Image.fromarray(img).resize(size, Image.ANTIALIAS))/ 255.
 
+def search_color(color, circle_color):
+    global palette_circle_x, palette_circle_y, palette_square_x, palette_square_y
+    # theta = 0
+    # k = math.pi/3
+    # if circle_color[0] == 255:
+    #     if circle_color[1] != 0:
+    #         theta = -k + k*(circle_color[1]/255)
+    #     else:
+    #         theta = -k - k*(circle_color[2]/255)
+    # elif circle_color[1] == 255:
+    #     if circle_color[0] != 0:
+    #         theta = k - k*(circle_color[0]/255)
+    #     else:
+    #         theta = k + k*(circle_color[2]/255)
+    # else:
+    #     if circle_color[0] != 0:
+    #         theta = -3*k + k*(circle_color[0]/255)
+    #     else:
+    #         theta = 3*k - k*(circle_color[1]/255)
+    # if theta > 0:
+    #     x = 1 - abs(theta-math.pi/2)/(math.pi/2)*115
+    # else:
+    #     x = -1 + abs(theta+math.pi/2)/(math.pi/2)*115
+    # y = (abs(theta)/math.pi - math.pi/2)/(math.pi/2)*-1*115
+    # print(x,y)
+    for i in range(-120, 120):
+        for j in range(-120, 120):
+            if abs(i) <= 66 and abs(j) <= 66:
+                continue
+            if np.linalg.norm((i, j)) < 116 and np.linalg.norm((i, j)) > 114 and np.linalg.norm(np.array(circle_color-palette_img[i+127][j+127])) < 2:
+                print(palette_img[i+127][j+127])
+                palette_circle_x = int(j/np.linalg.norm((i, j))*115+127)
+                palette_circle_y = int(i/np.linalg.norm((i, j))*115+127)
+                update_palette_square()
+                for n in range(128):
+                    for m in range(128):
+                        if np.linalg.norm(np.array(palette_square_image[n][m]- color)) < 1:
+                            palette_square_x = m
+                            palette_square_y = n
+                            update_palette()
+                            update_palette_square()
+                            return
+                            
+
+def get_color(color):
+    # print(color)
+    tmp = color + 255 - max(color)
+    # print(tmp)
+    if min(tmp) == 255:
+        search_color(color, (255, 255, 0))
+        return
+    # print('!')
+    if tmp[0] == 255:
+        if tmp[1] > tmp[2]:
+            tmp[1] -= (255-tmp[1])*(tmp[2]/(255-tmp[2]))
+            search_color(color, (tmp[0], tmp[1], 0))
+        else:
+            tmp[2] -= (255-tmp[2])*(tmp[1]/(255-tmp[1]))
+            search_color(color, (tmp[0], 0, tmp[2]))
+    elif tmp[1] == 255:
+        if tmp[0] > tmp[2]:
+            tmp[0] -= (255-tmp[0])*(tmp[2]/(255-tmp[2]))
+            search_color(color, (tmp[0], tmp[1], 0))
+        else:
+            tmp[2] -= (255-tmp[2])*(tmp[0]/(255-tmp[0]))
+            search_color(color, (0, tmp[1], tmp[2]))
+    else:
+        if tmp[0] > tmp[1]:
+            tmp[0] -= (255-tmp[0])*(tmp[1]/(255-tmp[1]))
+            search_color(color, (tmp[0], 0, tmp[2]))
+        else:
+            tmp[1] -= (255-tmp[1])*(tmp[0]/(255-tmp[0]))
+            search_color(color, (0, tmp[1], tmp[2]))
+    # print(tmp)
 
 def Filtering(img, k=5):
     blur = cv2.GaussianBlur(img,(k,k),0)
@@ -101,7 +190,10 @@ def Filtering(img, k=5):
 
 def draw_line(p1, p2):
     global img, stencil_id
-    cv2.line(img,p1,p2,tuple(palette_square_image[palette_square_y][palette_square_x]),stencil_size[stencil_id])
+    if stencil_id == stencils['eraser']:
+        cv2.line(img,p1,p2,(255, 255, 255),stencil_size[stencil_id])
+    else:
+        cv2.line(img,p1,p2,tuple(palette_square_image[palette_square_y][palette_square_x]),stencil_size[stencil_id])
 
 def update_drawing_panel():
     global img, drawing_panel, mouse_x, mouse_y
@@ -191,14 +283,55 @@ def update_palette_square():
     palette_square.configure(image=photo)
     palette_square.image = photo
 
+def save_result(iter=5):
+    print('Save...')
+    if not os.path.exists(save_dir):
+	    os.makedirs(save_dir)
+
+    img_out = reImage(img)
+    for i in range(iter+1):
+        if gray:
+            plt.imsave(save_dir + str(i) + '.png',img_out.reshape(img_out.shape[0], img_out.shape[1]),cmap='Greys_r')
+        else:
+            plt.imsave(save_dir + str(i) + '.png',img_out)
+        img_out = model.AutoDraw(img_out)
+
+def set_root_events():
+    global root
+
+    def key(event):
+        global img
+        
+        if event.char == 's' or event.char == 'S':
+            save_result()
+        elif event.char == 'c' or event.char == 'C':
+            insert_queue(img)
+            img = np.ones((512, 512, 3), np.uint8) * 255
+        elif event.char == 'p' or event.char == 'P':
+            pen_button_cllick()
+        elif event.char == 'e' or event.char == 'E':
+            eraser_button_click()
+        elif event.char == '1':
+            stencil_size[stencil_id] = max(2, stencil_size[stencil_id]-2)
+        elif event.char == '2':
+            stencil_size[stencil_id] += 2
+        elif event.char == 'r' or event.char == 'R':
+            redo()
+
+    root.bind('<Key>', key)
+
 def set_drawing_panel_events():
     global drawing_panel
 
     def left_button_click(event):
-        global pre_x, pre_y
+        global pre_x, pre_y, img
+        insert_queue(img)
         pre_x = event.x
         pre_y = event.y
         mouse_motion(event)
+
+    def right_button_click(event):
+        get_color(img[event.y][event.x])
 
     def left_button_move(event):
         global pre_x, pre_y
@@ -219,6 +352,7 @@ def set_drawing_panel_events():
         mouse_x, mouse_y = event.x, event.y
 
     drawing_panel.bind('<Button-1>', left_button_click)
+    drawing_panel.bind('<Button-3>', right_button_click)
     drawing_panel.bind('<B1-Motion>', left_button_move)
     drawing_panel.bind('<MouseWheel>', wheel)
     drawing_panel.bind('<Motion>', mouse_motion)
@@ -282,17 +416,24 @@ def main():
     create_palette()
     update_palette()
     update_palette_square()
+    set_root_events()
     set_palette_event()
     set_drawing_panel_events()
     set_palette_square_event()
     cnt = 0
     while True:
-        if cnt > 5:
+        if cnt > 30:
             if USE_MODEL:
-                img_re = reImage(img, gray=True)
+                img_re = reImage(img)
+                img_re = model.AutoDraw(img_re)
+                img_re = model.AutoDraw(img_re)
                 img_re = model.AutoDraw(img_re)*255
-                img_re = np.reshape(img_re, [128,128]).astype(np.int8)
-                img_re = np.array(Image.fromarray(img_re, 'L').resize((128,128), Image.ANTIALIAS))
+                if RGB:
+                    img_re = np.reshape(img_re, [128,128,3]).astype(np.uint8)
+                    img_re = np.array(Image.fromarray(img_re).resize((128,128), Image.ANTIALIAS))
+                else:
+                    img_re = np.reshape(img_re, [128,128]).astype(np.uint8)
+                    img_re = np.array(Image.fromarray(img_re, 'L').resize((128,128), Image.ANTIALIAS))
             cnt = 0
         cnt += 1
 
