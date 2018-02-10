@@ -2,6 +2,7 @@ import os
 import cv2
 import util
 import math
+import queue
 import random
 import numpy as np
 from tkinter import *
@@ -21,7 +22,7 @@ WINDOW_AREA = (TOOLBOX_AREA[0], TOOLBOX_AREA[1]+DRAWING_AREA[1]+PADDINGS[2]*2)
 save_dir = 'save/'
 
 if USE_MODEL:
-    import VAEGAN_head_128_RGB as model
+    import model as model
 
 # main window
 root = Tk()
@@ -46,34 +47,46 @@ palette_panel.place(x=PADDINGS[1]+PADDINGS[2]*2+SHOW_AREA[0]+DRAWING_AREA[0], y=
 palette_square = Label(root, width=128, height=128, borderwidth=0, relief='groove')
 palette_square.place(x=PADDINGS[1]+PADDINGS[2]*2+SHOW_AREA[0]+DRAWING_AREA[0]+65, y=TOOLBOX_AREA[1]+PADDINGS[2]+PADDINGS[1]+65)
 
-
-# button
-stencils = {'pen': 0, 'eraser':1}
+############################################################
+#                         Tool Box                         #
+############################################################
+stencils = {'pen': 0, 'eraser':1, 'paint_bucket':2}
 def highlight_button(id):
     global stencil_buttons
     for button in stencil_buttons:
         button.configure(background='white')
-    stencil_buttons[id].configure(background='gray')
+    stencil_buttons[id].configure(background='#CCCCCC')
 
 def pen_button_cllick():
     global stencil_id
     stencil_id = stencils['pen']
-    highlight_button(stencils['pen'])
+    highlight_button(stencil_id)
 
 def eraser_button_click():
     global stencil_id
     stencil_id = stencils['eraser']
-    highlight_button(stencils['eraser'])
+    highlight_button(stencil_id)
+
+def paint_bucket_button_click():
+    global stencil_id
+    stencil_id = stencils['paint_bucket']
+    highlight_button(stencil_id)
 
 pen_image = PhotoImage(file='resource/pen.png')
 pen_button = Button(root, width=32, height=32, image=pen_image, command=pen_button_cllick)
 pen_button.place(x=PADDINGS[1]+PADDINGS[2]+SHOW_AREA[0], y=PADDINGS[1])
-pen_button.configure(background='gray')
+pen_button.configure(background='#CCCCCC')
+
 eraser_image = PhotoImage(file='resource/eraser.png')
 eraser_button = Button(root, image=eraser_image, width=32, height=32, command=eraser_button_click)
 eraser_button.place(x=PADDINGS[1]+PADDINGS[2]*2+SHOW_AREA[0]+32, y=PADDINGS[1])
 
-stencil_buttons = [pen_button, eraser_button]
+paint_bucket_button_image = PhotoImage(file='resource/PaintBucket.png')
+paint_bucket_button = Button(root, image=paint_bucket_button_image, width=32, height=32, command=paint_bucket_button_click)
+paint_bucket_button.place(x=PADDINGS[1]+PADDINGS[2]*3+SHOW_AREA[0]+64, y=PADDINGS[1])
+
+stencil_buttons = [pen_button, eraser_button, paint_bucket_button]
+############################################################
 
 ###################### Drawing ######################
 img = np.ones((512, 512, 3), np.uint8) * 255
@@ -88,19 +101,19 @@ stencil_id = 0
 mouse_x = mouse_y = pre_x = pre_y = 0
 palette_circle_x, palette_circle_y, palette_square_x, palette_square_y = 195, 33, 0, 127
 palette_pressing = False
-redo_queue = []
+redo_stack = []
 
 def insert_queue(img):
-    redo_queue.insert(0,np.copy(img))
-    if(len(redo_queue) > 10):
-        redo_queue.pop()
+    redo_stack.insert(0,np.copy(img))
+    if(len(redo_stack) > 10):
+        redo_stack.pop()
 
 def redo():
     global img
-    if(len(redo_queue)>0):
+    if(len(redo_stack)>0):
         print("Redo")
-        img = np.copy(redo_queue[0])
-        redo_queue.pop(0)
+        img = np.copy(redo_stack[0])
+        redo_stack.pop(0)
     else:
         print("Can't Redo")
 
@@ -139,7 +152,7 @@ def search_color(color, circle_color):
             if abs(i) <= 66 and abs(j) <= 66:
                 continue
             if np.linalg.norm((i, j)) < 116 and np.linalg.norm((i, j)) > 114 and np.linalg.norm(np.array(circle_color-palette_img[i+127][j+127])) < 2:
-                print(palette_img[i+127][j+127])
+                # print(palette_img[i+127][j+127])
                 palette_circle_x = int(j/np.linalg.norm((i, j))*115+127)
                 palette_circle_y = int(i/np.linalg.norm((i, j))*115+127)
                 update_palette_square()
@@ -188,12 +201,33 @@ def Filtering(img, k=5):
     blur = cv2.GaussianBlur(img,(k,k),0)
     return blur
 
-def draw_line(p1, p2):
+def fill_area(p, color):
+    global img
+    p = (p[1], p[0])
+    m = np.zeros((img.shape[0], img.shape[1]))
+    c = np.copy(img[p[0]][p[1]])
+    s = set([])
+    s.add(p)
+    dir = [[1, 0], [-1, 0], [0, 1], [0, -1]]
+    cnt = 0
+    while len(s) != 0:
+        cnt += 1
+        cur = s.pop()
+        img[cur[0]][cur[1]] = np.copy(color)
+        for d in dir:
+            if cur[0]+d[0] >= 0 and cur[0]+d[0] < DRAWING_AREA[0] and cur[1]+d[1] >= 0 and cur[1]+d[1] < DRAWING_AREA[1] and m[cur[0]+d[0]][cur[1]+d[1]] == 0 and np.array_equal(img[cur[0]+d[0]][cur[1]+d[1]], c):
+                s.add((cur[0]+d[0], cur[1]+d[1]))
+                m[cur[0]+d[0]][cur[1]+d[1]] = 1
+    print(cnt)
+
+def draw(p1, p2):
     global img, stencil_id
     if stencil_id == stencils['eraser']:
         cv2.line(img,p1,p2,(255, 255, 255),stencil_size[stencil_id])
-    else:
+    elif stencil_id ==stencils['pen']:
         cv2.line(img,p1,p2,tuple(palette_square_image[palette_square_y][palette_square_x]),stencil_size[stencil_id])
+    elif stencil_id == stencils['paint_bucket']:
+        fill_area(p2, palette_square_image[palette_square_y][palette_square_x])
 
 def update_drawing_panel():
     global img, drawing_panel, mouse_x, mouse_y
@@ -233,6 +267,14 @@ def get_circle_color(x, y):
         color[2] = 1
         color[0] = (theta+3*k)/k
     return color*255
+
+def change_stencil_size(n):
+    if stencil_id == stencils['paint_bucket']:
+        return
+
+    global stencil_size
+    stencil_size[stencil_id] += n
+    stencil_size[stencil_id] = max(2, stencil_size[stencil_id])
 
 def create_palette():
     global palette_img, palette_weighting_1
@@ -290,7 +332,7 @@ def save_result(iter=5):
 
     img_out = reImage(img)
     for i in range(iter+1):
-        if gray:
+        if not RGB:
             plt.imsave(save_dir + str(i) + '.png',img_out.reshape(img_out.shape[0], img_out.shape[1]),cmap='Greys_r')
         else:
             plt.imsave(save_dir + str(i) + '.png',img_out)
@@ -312,9 +354,9 @@ def set_root_events():
         elif event.char == 'e' or event.char == 'E':
             eraser_button_click()
         elif event.char == '1':
-            stencil_size[stencil_id] = max(2, stencil_size[stencil_id]-2)
+            change_stencil_size(-2)
         elif event.char == '2':
-            stencil_size[stencil_id] += 2
+            change_stencil_size(2)
         elif event.char == 'r' or event.char == 'R':
             redo()
 
@@ -329,13 +371,17 @@ def set_drawing_panel_events():
         pre_x = event.x
         pre_y = event.y
         mouse_motion(event)
+        if stencil_id == stencils['paint_bucket']:
+            draw((pre_x, pre_y), (event.x, event.y))
+
 
     def right_button_click(event):
         get_color(img[event.y][event.x])
 
     def left_button_move(event):
         global pre_x, pre_y
-        draw_line((pre_x, pre_y), (event.x, event.y))   
+        if stencil_id != stencils['paint_bucket']:
+            draw((pre_x, pre_y), (event.x, event.y))   
         pre_x = event.x
         pre_y = event.y
         mouse_motion(event)
@@ -343,9 +389,9 @@ def set_drawing_panel_events():
     def wheel(event):
         global stencil_size
         if event.delta > 0:
-            stencil_size[stencil_id] += 2
+            change_stencil_size(2)
         else:
-            stencil_size[stencil_id] = max(2, stencil_size[stencil_id]-2)
+            change_stencil_size(-2)
 
     def mouse_motion(event):
         global mouse_x, mouse_y
@@ -422,12 +468,10 @@ def main():
     set_palette_square_event()
     cnt = 0
     while True:
-        if cnt > 30:
+        if cnt > 5:
             if USE_MODEL:
                 img_re = reImage(img)
-                img_re = model.AutoDraw(img_re)
-                img_re = model.AutoDraw(img_re)
-                img_re = model.AutoDraw(img_re)*255
+                img_re = model.AutoDraw(img_re, iter=5)*255
                 if RGB:
                     img_re = np.reshape(img_re, [128,128,3]).astype(np.uint8)
                     img_re = np.array(Image.fromarray(img_re).resize((128,128), Image.ANTIALIAS))
