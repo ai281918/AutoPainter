@@ -14,10 +14,12 @@ import matplotlib.pyplot as plt
 # variable
 USE_MODEL = False
 RGB = False
+RECONSTRUCT_ITER = 3
+INPUT_SIZE = (128,128)
 PADDINGS = [2, 4, 8, 16, 32]
 DRAWING_AREA = (512, 512, 3)
-SHOW_AREA = (128, 128, 3)
-TOOLBOX_AREA = (924, 32)
+SHOW_AREA = (256, 256, 3)
+TOOLBOX_AREA = (DRAWING_AREA[0]+SHOW_AREA[0]+256+26, 32)
 WINDOW_AREA = (TOOLBOX_AREA[0], TOOLBOX_AREA[1]+DRAWING_AREA[1]+PADDINGS[2]*2)
 save_dir = 'save/'
 
@@ -51,6 +53,19 @@ palette_square.place(x=PADDINGS[1]+PADDINGS[2]*2+SHOW_AREA[0]+DRAWING_AREA[0]+65
 #                         Tool Box                         #
 ############################################################
 stencils = {'pen': 0, 'eraser':1, 'paint_bucket':2}
+
+def minus_button_click():
+    global RECONSTRUCT_ITER, iter_label_text
+    RECONSTRUCT_ITER -= 1
+    RECONSTRUCT_ITER = max(RECONSTRUCT_ITER, 1)
+    iter_label_text.set(str(RECONSTRUCT_ITER))
+
+def plus_button_click():
+    global RECONSTRUCT_ITER, iter_label_text
+    RECONSTRUCT_ITER += 1
+    RECONSTRUCT_ITER = min(RECONSTRUCT_ITER, 10)
+    iter_label_text.set(str(RECONSTRUCT_ITER))
+
 def highlight_button(id):
     global stencil_buttons
     for button in stencil_buttons:
@@ -72,6 +87,27 @@ def paint_bucket_button_click():
     stencil_id = stencils['paint_bucket']
     highlight_button(stencil_id)
 
+def load_button_click():
+    global img
+    img = np.copy(np.array(Image.open('save/0.png').resize((SHOW_AREA[0], SHOW_AREA[1]), Image.ANTIALIAS))[:,:,0:3])
+
+def cat_button_click():
+    global img
+    img = np.copy(np.array(Image.open('resource/big_cat.png'))[:,:,0:3])
+
+minus_image = PhotoImage(file='resource/minus.png')
+minus_button = Button(root, image=minus_image, width=32, height=32, command=minus_button_click)
+minus_button.place(x=PADDINGS[1], y=PADDINGS[1])
+
+plus_image = PhotoImage(file='resource/plus.png')
+plus_button = Button(root, image=plus_image, width=32, height=32, command=plus_button_click)
+plus_button.place(x=PADDINGS[1]+PADDINGS[2]*2+64, y=PADDINGS[1])
+
+iter_label_text = StringVar()
+iter_label_text.set('3')
+iter_label = Label(root, textvariable=iter_label_text, font=('Arial', 20))
+iter_label.place(x=PADDINGS[1]+PADDINGS[2]+32+10, y=PADDINGS[1])
+
 pen_image = PhotoImage(file='resource/pen.png')
 pen_button = Button(root, width=32, height=32, image=pen_image, command=pen_button_cllick)
 pen_button.place(x=PADDINGS[1]+PADDINGS[2]+SHOW_AREA[0], y=PADDINGS[1])
@@ -83,14 +119,22 @@ eraser_button.place(x=PADDINGS[1]+PADDINGS[2]*2+SHOW_AREA[0]+32, y=PADDINGS[1])
 
 paint_bucket_button_image = PhotoImage(file='resource/PaintBucket.png')
 paint_bucket_button = Button(root, image=paint_bucket_button_image, width=32, height=32, command=paint_bucket_button_click)
-paint_bucket_button.place(x=PADDINGS[1]+PADDINGS[2]*3+SHOW_AREA[0]+64, y=PADDINGS[1])
+paint_bucket_button.place(x=PADDINGS[1]+PADDINGS[2]*3+SHOW_AREA[0]+32*2, y=PADDINGS[1])
 
-stencil_buttons = [pen_button, eraser_button, paint_bucket_button]
+load_button_image = PhotoImage(file='resource/load.png')
+load_button = Button(root, image=load_button_image, width=32, height=32, command=load_button_click)
+load_button.place(x=PADDINGS[1]+PADDINGS[2]*4+SHOW_AREA[0]+32*3, y=PADDINGS[1])
+
+cat_button_image = PhotoImage(file='resource/cat.png')
+cat_button = Button(root, image=cat_button_image, width=32, height=32, command=cat_button_click)
+cat_button.place(x=PADDINGS[1]+PADDINGS[2]*5+SHOW_AREA[0]+32*4, y=PADDINGS[1])
+
+stencil_buttons = [pen_button, eraser_button, paint_bucket_button, cat_button]
 ############################################################
 
 ###################### Drawing ######################
 img = np.ones((512, 512, 3), np.uint8) * 255
-img_re = np.ones((128, 128, 3), np.uint8) * 255
+img_re = np.ones(SHOW_AREA, np.uint8) * 255
 palette_img = np.ones((256, 256, 3)) * 240
 palette_square_image = np.zeros((128, 128, 3))
 palette_weighting_1 = np.zeros((128, 128, 3))
@@ -117,36 +161,13 @@ def redo():
     else:
         print("Can't Redo")
 
-def reImage(img, size=(128,128)):
+def reImage(img):
     if not RGB:
-        return np.array(Image.fromarray(img).resize(size, Image.ANTIALIAS))[:,:,0] / 255.
-    return np.array(Image.fromarray(img).resize(size, Image.ANTIALIAS))/ 255.
+        return np.array(Image.fromarray(img).resize(INPUT_SIZE, Image.ANTIALIAS))[:,:,0] / 255.
+    return np.array(Image.fromarray(img).resize(INPUT_SIZE, Image.ANTIALIAS))/ 255.
 
 def search_color(color, circle_color):
     global palette_circle_x, palette_circle_y, palette_square_x, palette_square_y
-    # theta = 0
-    # k = math.pi/3
-    # if circle_color[0] == 255:
-    #     if circle_color[1] != 0:
-    #         theta = -k + k*(circle_color[1]/255)
-    #     else:
-    #         theta = -k - k*(circle_color[2]/255)
-    # elif circle_color[1] == 255:
-    #     if circle_color[0] != 0:
-    #         theta = k - k*(circle_color[0]/255)
-    #     else:
-    #         theta = k + k*(circle_color[2]/255)
-    # else:
-    #     if circle_color[0] != 0:
-    #         theta = -3*k + k*(circle_color[0]/255)
-    #     else:
-    #         theta = 3*k - k*(circle_color[1]/255)
-    # if theta > 0:
-    #     x = 1 - abs(theta-math.pi/2)/(math.pi/2)*115
-    # else:
-    #     x = -1 + abs(theta+math.pi/2)/(math.pi/2)*115
-    # y = (abs(theta)/math.pi - math.pi/2)/(math.pi/2)*-1*115
-    # print(x,y)
     for i in range(-120, 120):
         for j in range(-120, 120):
             if abs(i) <= 66 and abs(j) <= 66:
@@ -471,13 +492,13 @@ def main():
         if cnt > 5:
             if USE_MODEL:
                 img_re = reImage(img)
-                img_re = model.AutoDraw(img_re, iter=5)*255
+                img_re = model.AutoDraw(img_re, iter=RECONSTRUCT_ITER)*255
                 if RGB:
-                    img_re = np.reshape(img_re, [128,128,3]).astype(np.uint8)
-                    img_re = np.array(Image.fromarray(img_re).resize((128,128), Image.ANTIALIAS))
+                    img_re = np.reshape(img_re, (INPUT_SIZE[0],INPUT_SIZE[1],3)).astype(np.uint8)
+                    img_re = np.array(Image.fromarray(img_re).resize((SHOW_AREA[0], SHOW_AREA[1]), Image.ANTIALIAS))
                 else:
-                    img_re = np.reshape(img_re, [128,128]).astype(np.uint8)
-                    img_re = np.array(Image.fromarray(img_re, 'L').resize((128,128), Image.ANTIALIAS))
+                    img_re = np.reshape(img_re, INPUT_SIZE).astype(np.uint8)
+                    img_re = np.array(Image.fromarray(img_re, 'L').resize((SHOW_AREA[0], SHOW_AREA[1]), Image.ANTIALIAS))
             cnt = 0
         cnt += 1
 
